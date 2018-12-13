@@ -1,0 +1,6 @@
+project(speech-tools)
+include_directories(${CMAKE_SOURCE_DIR})
+aux_source_directory(. DIR_LIB_SRCS)
+add_library(kaldi-feat ${DIR_LIB_SRCS})
+target_link_libraries(kaldi-feat kaldi-util kaldi-base)
+# MESSAGE("This is FEAT ${PROJECT_ROOT_PATH} KALDI")
