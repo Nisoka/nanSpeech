@@ -8,18 +8,24 @@
 
 #include <vector>
 
-#include "parse-option.h"
-#include "wav.h"
+#include "util/parse-options.h"
+#include "util/common-utils.h"
+#include "feat/wave-reader.h"
+#include "feat/signal.h"
+
 #include "vad.h"
+
+using namespace kaldi;
 
 int main(int argc, char *argv[]) {
     const char *usage = "Apply energy vad for input wav file\n"
                         "Usage: vad-test wav_in_file\n";
     ParseOptions po(usage);
 
+    int channelLimit = 1;
     int frame_len = 10; // 10 ms
-    po.Register("frame-len", &frame_len, "frame length in millionsenconds, must be 10/20/30");
     int mode = 0; 
+    po.Register("frame-len", &frame_len, "frame length in millionsenconds, must be 10/20/30");
     po.Register("mode", &mode, "vad mode");
 
     po.Read(argc, argv);
@@ -29,66 +35,89 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    std::string wav_in = po.GetArg(1), 
-         wav_out = po.GetArg(2);
+    std::string input_wave_file = po.GetArg(1), 
+        output_wave_file = po.GetArg(2);
 
-    WavReader reader(wav_in.c_str());
 
-    //printf("input file %s info: \n"
-    //       "sample_rate %d \n"
-    //       "channels %d \n"
-    //       "bits_per_sample_ %d \n",
-    //       wav_in.c_str(),
-    //       reader.SampleRate(), 
-    //       reader.NumChannel(),
-    //       reader.BitsPerSample()); 
-    
-    int sample_rate = reader.SampleRate();
-    int num_sample = reader.NumSample();
+    // kaldi classType
+    WaveData input_wave;
+    {
+      WaveHolder waveholder;
+      Input ki(input_wave_file);
+      waveholder.Read(ki.Stream());
+      input_wave = waveholder.Value();
+    }
+
+    const Matrix<BaseFloat> &input_matrix = input_wave.Data();
+    BaseFloat sample_rate = input_wave.SampFreq();
+    int32 num_sample = input_matrix.NumCols(),  // #samples in the input
+          num_input_channel = input_matrix.NumRows();  // #channels in the input
+
+    KALDI_LOG << "sampling frequency of input: " << sample_rate
+              << " #samples: " << num_sample
+              << " #channel: " << num_input_channel;
+
+    // sample_rate is  num point of 1s
+    // frame_len is n(ms), so the frame point is frame_len*sample_rate/1000
     int num_point_per_frame = (int)(frame_len * sample_rate / 1000);
 
-    // printf("num_sample:%d, num_point_per_frame:%d \n", num_sample, num_point_per_frame);
-    
+    // int num_frames = num_sample / num_point_per_frame;
+
+    int num_frames_speech = 0;
+
+
+    // input data
     short *data = (short *)calloc(sizeof(short), num_sample);
-    // Copy first channel
+
+    // limit only 0 channel
     for (int i = 0; i < num_sample; i++) {
-        data[i] = reader.Data()[i * reader.NumChannel()];
+      data[i] = input_matrix(0, i);
     }
-
-    // printf("mode %d\n", mode);
-    Vad vad(mode);
-
-    int num_frames = num_sample / num_point_per_frame;
+   
+    
+    
+    Vad vad(mode);    
     std::vector<bool> vad_reslut;
-    int num_speech_frames = 0;
-
     for (int i = 0; i < num_sample; i += num_point_per_frame) {
         // last frame 
-        if (i + num_point_per_frame > num_sample) break;
+        if (i + num_point_per_frame > num_sample)
+          break;
+        
         bool tags = vad.IsSpeech(data+i, num_point_per_frame, sample_rate);
+        
         vad_reslut.push_back(tags);
-        if (tags) num_speech_frames++;
-        //printf("%f %d \n", float(i) / sample_rate, (int)tags);
+        
+        if (tags)
+          num_frames_speech++;
     }
 
-    int num_speech_sample = num_speech_frames * num_point_per_frame;
+    
+    // speech points == frames * vad_true_frames
+    int num_speech_sample = num_frames_speech * num_point_per_frame;
     short *speech_data = (short *)calloc(sizeof(short), num_speech_sample);
     
     int speech_cur = 0;
     for (int i = 0; i < vad_reslut.size(); i++) {
-        // speech
+        // num point of one speech frame 
         if (vad_reslut[i]) {
-            memcpy(speech_data + speech_cur * num_point_per_frame,
-                   data + i * num_point_per_frame, 
-                   num_point_per_frame * sizeof(short));
-            speech_cur++;
+          memcpy(speech_data + speech_cur * num_point_per_frame,
+                 data + i * num_point_per_frame, 
+                 num_point_per_frame * sizeof(short));
+          speech_cur++;
         }
     }
 
-    WavWriter writer(speech_data, num_speech_sample, 1, 
-                        reader.SampleRate(), reader.BitsPerSample());
+    // the rnnoise limit the channel must be 1, so all the channel input will get the channel 1
+    Matrix<BaseFloat> out_matrix(channelLimit, num_speech_sample);
+    for(int i = 0; i < num_sample; i++){
+      out_matrix(0, i) = speech_data[i];
+    }
 
-    writer.Write(wav_out.c_str());
+    WaveData out_wave(sample_rate, out_matrix);
+    Output ko(output_wave_file, false);
+    out_wave.Write(ko.Stream());
+
+    
     free(data);
     free(speech_data);
     return 0;
