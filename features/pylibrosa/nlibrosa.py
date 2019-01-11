@@ -28,6 +28,6 @@ def show_wave_logMelSpec_of(wavPath):
 
 
 if __name__ == '__main__':
-    show_wave_logMelSpec_of('./data/input.wav')
-    show_wave_logMelSpec_of('./data/output.wav')
+    show_wave_logMelSpec_of('/data/sr-data/aishell/data_aishell/wav/train/S0047/BAC009S0047W0476.wav')
+    show_wave_logMelSpec_of('/data/sr-data/aishell/data_aishell/wav/train/S0048/BAC009S0048W0490.wav')
     plt.show()
